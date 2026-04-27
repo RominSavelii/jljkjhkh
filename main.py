@@ -1,31 +1,42 @@
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, simpledialog
 import json
 import os
 import subprocess
+import random
 from datetime import datetime
 
-class MovieLibrary:
+class RandomTaskGenerator:
     def __init__(self, root):
         self.root = root
-        self.root.title("Movie Library")
-        self.movies = []
-        self.filtered_movies = []
+        self.root.title("Random Task Generator")
         
-        # Инициализация Git-репозитория при первом запуске
+        # Предопределённые задачи с категориями
+        self.predefined_tasks = [
+            {"task": "Прочитать статью", "category": "Учёба"},
+            {"task": "Сделать зарядку", "category": "Спорт"},
+            {"task": "Написать отчёт", "category": "Работа"},
+            {"task": "Изучить новую тему", "category": "Учёба"},
+            {"task": "Пробежать 3 км", "category": "Спорт"},
+            {"task": "Проверить почту", "category": "Работа"}
+        ]
+        
+        self.history = []
+        self.current_tasks = self.predefined_tasks.copy()
+        
+        # Инициализация Git-репозитория
         self.init_git_repo()
-        self.load_movies()
+        self.load_data()
         
         self.create_widgets()
-        self.update_table()
-        self.update_genre_filter()
+        self.update_category_filter()
     
     def init_git_repo(self):
         """Инициализация Git‑репозитория, если его нет"""
         if not os.path.exists(".git"):
             try:
                 subprocess.run(["git", "init"], check=True, capture_output=True)
-                # Создаём .gitignore для исключения временных файлов
+                # Создаём .gitignore
                 with open(".gitignore", "w") as f:
                     f.write("*.tmp\n*.log\n__pycache__/\n")
                 subprocess.run(["git", "add", ".gitignore"], check=True, capture_output=True)
@@ -38,169 +49,175 @@ class MovieLibrary:
     def commit_to_git(self):
         """Коммит изменений в Git"""
         try:
-            subprocess.run(["git", "add", "movies.json"], check=True, capture_output=True)
-            commit_msg = f"Update movie library: {len(self.movies)} movies"
+            subprocess.run(["git", "add", "tasks_data.json"], check=True, capture_output=True)
+            commit_msg = f"Update task history: {len(self.history)} entries"
             subprocess.run(["git", "commit", "-m", commit_msg],
                          check=True, capture_output=True)
         except subprocess.CalledProcessError:
-            pass  # Игнорируем ошибки Git — приложение продолжит работу
+            pass  # Игнорируем ошибки Git
+    
     
     def create_widgets(self):
-        # Фрейм для формы добавления
-        form_frame = ttk.LabelFrame(self.root, text="Добавить фильм")
-        form_frame.pack(padx=10, pady=10, fill="x")
+        # Фрейм для генерации задач
+        generate_frame = ttk.LabelFrame(self.root, text="Генерация задач")
+        generate_frame.pack(padx=10, pady=10, fill="x")
         
-        # Поля формы
-        ttk.Label(form_frame, text="Название:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
-        self.title_entry = ttk.Entry(form_frame, width=30)
-        self.title_entry.grid(row=0, column=1, padx=5, pady=5)
+        self.generate_btn = ttk.Button(generate_frame, text="Сгенерировать задачу",
+                                   command=self.generate_random_task)
+        self.generate_btn.pack(pady=10)
         
-        ttk.Label(form_frame, text="Жанр:").grid(row=1, column=0, padx=5, pady=5, sticky="w")
-        self.genre_entry = ttk.Entry(form_frame, width=30)
-        self.genre_entry.grid(row=1, column=1, padx=5, pady=5)
+        # Фрейм для добавления новых задач
+        add_frame = ttk.LabelFrame(self.root, text="Добавить новую задачу")
+        add_frame.pack(padx=10, pady=5, fill="x")
         
-        ttk.Label(form_frame, text="Год выпуска:").grid(row=2, column=0, padx=5, pady=5, sticky="w")
-        self.year_entry = ttk.Entry(form_frame, width=30)
-        self.year_entry.grid(row=2, column=1, padx=5, pady=5)
+        ttk.Label(add_frame, text="Задача:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        self.new_task_entry = ttk.Entry(add_frame, width=30)
+        self.new_task_entry.grid(row=0, column=1, padx=5, pady=5)
         
-        ttk.Label(form_frame, text="Рейтинг (0–10):").grid(row=3, column=0, padx=5, pady=5, sticky="w")
-        self.rating_entry = ttk.Entry(form_frame, width=30)
-        self.rating_entry.grid(row=3, column=1, padx=5, pady=5)
+        ttk.Label(add_frame, text="Категория:").grid(row=1, column=0, padx=5, pady=5, sticky="w")
+        self.category_var = tk.StringVar(value="Учёба")
+        categories = ["Учёба", "Спорт", "Работа"]
+        self.category_combo = ttk.Combobox(add_frame, textvariable=self.category_var,
+                                           values=categories, state="readonly")
+        self.category_combo.grid(row=1, column=1, padx=5, pady=5)
         
-        # Кнопка добавления
-        self.add_btn = ttk.Button(form_frame, text="Добавить фильм", command=self.add_movie)
-        self.add_btn.grid(row=4, column=0, columnspan=2, pady=10)
+        self.add_task_btn = ttk.Button(add_frame, text="Добавить задачу",
+                               command=self.add_new_task)
+        self.add_task_btn.grid(row=2, column=0, columnspan=2, pady=10)
         
         # Фрейм для фильтрации
         filter_frame = ttk.LabelFrame(self.root, text="Фильтрация")
         filter_frame.pack(padx=10, pady=5, fill="x")
         
-        ttk.Label(filter_frame, text="Жанр:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
-        self.genre_filter = ttk.Combobox(filter_frame, state="readonly")
-        self.genre_filter.grid(row=0, column=1, padx=5, pady=5)
+        ttk.Label(filter_frame, text="Категория:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        self.filter_category = ttk.Combobox(filter_frame, state="readonly")
+        self.filter_category.grid(row=0, column=1, padx=5, pady=5)
         
-        ttk.Label(filter_frame, text="Год:").grid(row=0, column=2, padx=5, pady=5, sticky="w")
-        self.year_filter = ttk.Entry(filter_frame, width=10)
-        self.year_filter.grid(row=0, column=3, padx=5, pady=5)
+        self.apply_filter_btn = ttk.Button(filter_frame, text="Применить фильтр",
+                                 command=self.apply_filter)
+        self.apply_filter_btn.grid(row=0, column=2, padx=5, pady=5)
         
-        self.filter_btn = ttk.Button(filter_frame, text="Применить фильтр", command=self.apply_filter)
-        self.filter_btn.grid(row=0, column=4, padx=5, pady=5)
+        self.clear_filter_btn = ttk.Button(filter_frame, text="Сбросить фильтр",
+                                 command=self.clear_filter)
+        self.clear_filter_btn.grid(row=0, column=3, padx=5, pady=5)
         
-        self.clear_filter_btn = ttk.Button(filter_frame, text="Сбросить фильтр", command=self.clear_filter)
-        self.clear_filter_btn.grid(row=0, column=5, padx=5, pady=5)
+        # Фрейм для отображения истории
+        history_frame = ttk.LabelFrame(self.root, text="История сгенерированных задач")
+        history_frame.pack(padx=10, pady=10, fill="both", expand=True)
         
-        # Таблица
-        table_frame = ttk.Frame(self.root)
-        table_frame.pack(padx=10, pady=10, fill="both", expand=True)
-        columns = ("Название", "Жанр", "Год", "Рейтинг")
-        self.tree = ttk.Treeview(table_frame, columns=columns, show="headings", height=15)
+        columns = ("Время", "Задача", "Категория")
+        self.tree = ttk.Treeview(history_frame, columns=columns, show="headings", height=15)
         for col in columns:
             self.tree.heading(col, text=col)
-            self.tree.column(col, width=120)
-        scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=self.tree.yview)
+            self.tree.column(col, width=150)
+        scrollbar = ttk.Scrollbar(history_frame, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=scrollbar.set)
         self.tree.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
     
-    def validate_input(self, title, genre, year_str, rating_str):
-        if not title or not genre:
-            messagebox.showerror("Ошибка", "Название и жанр обязательны для заполнения")
-            return False
-        try:
-            year = int(year_str)
-            if year < 1888 or year > datetime.now().year:  # Первый фильм — 1888 г.
-                messagebox.showerror("Ошибка", "Год должен быть от 1888 до текущего года")
-                return False
-        except ValueError:
-            messagebox.showerror("Ошибка", "Год должен быть числом")
-            return False
-        try:
-            rating = float(rating_str)
-            if rating < 0 or rating > 10:
-                messagebox.showerror("Ошибка", "Рейтинг должен быть от 0 до 10")
-                return False
-        except ValueError:
-            messagebox.showerror("Ошибка", "Рейтинг должен быть числом")
+    def validate_task_input(self, task_text):
+        """Проверка корректности ввода задачи"""
+        if not task_text.strip():
+            messagebox.showerror("Ошибка", "Задача не может быть пустой")
             return False
         return True
     
-    def add_movie(self):
-        title = self.title_entry.get().strip()
-        genre = self.genre_entry.get().strip()
-        year_str = self.year_entry.get().strip()
-        rating_str = self.rating_entry.get().strip()
-        if self.validate_input(title, genre, year_str, rating_str):
-            movie = {
-                "title": title,
-                "genre": genre,
-                "year": int(year_str),
-                "rating": float(rating_str)
-            }
-            self.movies.append(movie)
-            self.save_movies()
-            self.update_table()
-            self.update_genre_filter()
-            # Очистка полей ввода
-            self.title_entry.delete(0, tk.END)
-            self.genre_entry.delete(0, tk.END)
-            self.year_entry.delete(self.year_entry.delete(0, tk.END)
-            self.rating_entry.delete(0, tk.END)
+    def add_new_task(self):
+        """Добавление новой задачи в список"""
+        task_text = self.new_task_entry.get().strip()
+        category = self.category_var.get()
+        if self.validate_task_input(task_text):
+            new_task = {"task": task_text, "category": category}
+            self.current_tasks.append(new_task)
+            self.save_data()
+            self.update_category_filter()
+            self.new_task_entry.delete(0, tk.END)
+            messagebox.showinfo("Успех", "Задача успешно добавлена")
     
-    def update_genre_filter(self):
-        """Обновление списка жанров в фильтре"""
-        genres = sorted(set(movie["genre"] for movie in self.movies))
-        self.genre_filter["values"] = ["Все жанры"] + genres
-        if genres:
-            self.genre_filter.set("Все жанры")
-    
+    def generate_random_task(self):
+        """Генерация случайной задачи и добавление в историю"""
+        if not self.current_tasks:
+            messagebox.showwarning("Предупреждение", "Нет задач для генерации")
+            return
+        random_task = random.choice(self.current_tasks)
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        history_entry = {
+            "timestamp": timestamp,
+            "task": random_task["task"],
+            "category": random_task["category"]
+        }
+        self.history.append(history_entry)
+        self.save_data()
+        self.update_history_table()
+        # Показываем сгенерированную задачу
+        messagebox.showinfo("Сгенерированная задача",
+                          f"Задача: {random_task['task']}\nКатегория: {random_task['category']}")
+    def update_history_table(self, filtered_history=None):
+        """Обновление таблицы истории"""
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        history_to_show = filtered_history if filtered_history is not None else self.history
+        for entry in history_to_show:
+            self.tree.insert("", "end", values=(
+                entry["timestamp"],
+                entry["task"],
+                entry["category"]
+            ))
+
     def apply_filter(self):
-        """Применение фильтров к таблице"""
-        selected_genre = self.genre_filter.get()
-        year_filter = self.year_filter.get().strip()
-        filtered = self.movies.copy()
-        # Фильтрация по жанру
-        if selected_genre and selected_genre != "Все жанры":
-            filtered = [movie for movie in filtered if movie["genre"] == selected_genre]
-        # Фильтрация по году
-        if year_filter:
-            try:
-                year = int(year_filter)
-                filtered = [movie for movie in filtered if movie["year"] == year]
-            except ValueError:
-                messagebox.showerror("Ошибка", "Год для фильтрации должен быть числом")
-                return
-        self.update_table(filtered)
-    
+        """Применение фильтра по категории"""
+        selected_category = self.filter_category.get()
+        if selected_category == "Все категории" or not selected_category:
+            self.update_history_table()
+            return
+        filtered = [entry for entry in self.history if entry["category"] == selected_category]
+        self.update_history_table(filtered)
+
     def clear_filter(self):
-        """Сброс фильтров"""
-        self.genre_filter.set("")
-        self.year_filter.delete(0, tk.END)
-        self.update_table()
-    
-    def load_movies(self):
-        """Загрузка фильмов из JSON-файла"""
-        if os.path.exists("movies.json"):
-            try:
-                with open("movies.json", "r", encoding="utf-8") as f:
-                    self.movies = json.load(f)
-                self.update_genre_filter()
-            except (json.JSONDecodeError, IOError) as e:
-                messagebox.showerror("Ошибка", f"Не удалось загрузить данные: {e}")
-                self.movies = []
-    
-    def save_movies(self):
-        """Сохранение фильмов в JSON-файл с коммитом в Git"""
+        """Сброс фильтра"""
+        self.filter_category.set("")
+        self.update_history_table()
+
+    def update_category_filter(self):
+        """Обновление списка категорий в фильтре"""
+        categories = sorted(set(task["category"] for task in self.current_tasks))
+        self.filter_category["values"] = ["Все категории"] + categories
+        if categories:
+            self.filter_category.set("Все категории")
+
+    def save_data(self):
+        """Сохранение данных в JSON-файл с коммитом в Git"""
+        data = {
+            "tasks": self.current_tasks,
+            "history": self.history
+        }
         try:
-            with open("movies.json", "w", encoding="utf-8") as f:
-                json.dump(self.movies, f, ensure_ascii=False, indent=2)
+            with open("tasks_data.json", "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
             # Автокоммит в Git
             self.commit_to_git()
         except IOError as e:
             messagebox.showerror("Ошибка", f"Не удалось сохранить данные: {e}")
-    
+
+    def load_data(self):
+        """Загрузка данных из JSON-файла"""
+        if os.path.exists("tasks_data.json"):
+            try:
+                with open("tasks_data.json", "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                self.current_tasks = data.get("tasks", self.predefined_tasks)
+                self.history = data.get("history", [])
+                self.update_category_filter()
+                self.update_history_table()
+            except (json.JSONDecodeError, IOError) as e:
+                messagebox.showerror("Ошибка", f"Не удалось загрузить данные: {e}")
+                # Используем предопределённые задачи при ошибке загрузки
+                self.current_tasks = self.predefined_tasks.copy()
+                self.history = []
 
 # Запуск приложения
 if __name__ == "__main__":
     root = tk.Tk()
-    app = MovieLibrary(root)
+    root.geometry("600x500")
+    app = RandomTaskGenerator(root)
     root.mainloop()
